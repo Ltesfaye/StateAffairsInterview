@@ -39,9 +39,17 @@ class StateService:
                 source=video.source,
                 filename=video.filename,
                 url=video.url,
+                stream_url=video.stream_url,
                 date_recorded=video.date_recorded,
                 committee=video.committee,
                 title=video.title,
+            )
+        elif video.stream_url:
+            # Update stream URL if it was discovered later
+            self.db.update_stream_url(
+                video_id=video.video_id,
+                source=video.source,
+                stream_url=video.stream_url,
             )
     
     def mark_video_processed(
@@ -79,6 +87,7 @@ class StateService:
                 source=record.source,
                 filename=record.filename,
                 url=record.url,
+                stream_url=record.stream_url,
                 date_recorded=record.date_recorded,
                 committee=record.committee,
                 title=record.title,
@@ -102,6 +111,7 @@ class StateService:
                 source=record.source,
                 filename=record.filename,
                 url=record.url,
+                stream_url=record.stream_url,
                 date_recorded=record.date_recorded,
                 committee=record.committee,
                 title=record.title,

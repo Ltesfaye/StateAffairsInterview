@@ -12,8 +12,9 @@ class VideoMetadata:
     video_id: str  # Unique identifier (filename or API ID)
     source: str  # 'house' or 'senate'
     filename: str  # Original filename
-    url: str  # Video URL or download URL
+    url: str  # Original player page URL or archive link
     date_recorded: datetime  # Date when video was recorded
+    stream_url: Optional[str] = None  # Resolved HLS/MP4 URL for direct download
     committee: Optional[str] = None  # Committee name
     title: Optional[str] = None  # Video title/description
     date_discovered: Optional[datetime] = None  # When we discovered it
@@ -38,6 +39,7 @@ class VideoMetadata:
             "source": self.source,
             "filename": self.filename,
             "url": self.url,
+            "stream_url": self.stream_url,
             "date_recorded": self.date_recorded,
             "committee": self.committee,
             "title": self.title,
@@ -52,6 +54,7 @@ class VideoMetadata:
             source=data["source"],
             filename=data["filename"],
             url=data["url"],
+            stream_url=data.get("stream_url"),
             date_recorded=data["date_recorded"],
             committee=data.get("committee"),
             title=data.get("title"),

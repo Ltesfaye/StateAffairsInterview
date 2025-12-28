@@ -1,62 +1,62 @@
-# Video Archive Microservice Framework
+# Video Archive Microservice Framework (Turbo Edition)
 
 ## Architecture Overview
 
-This is a microservice-based system designed to:
-1. **Current Phase**: Discover and download videos from past 1-2 months
-2. **Future Phase**: Scheduled detection of new uploads (cron/scheduler)
-3. **Future Phase**: Video transcription service
-4. **Future Phase**: Horizontal scaling for multiple uploads
+The system is a high-performance, microservice-based framework designed for automated discovery and high-speed downloading of legislative video archives.
 
-The system is built with clear service boundaries, making it easy to extend with additional capabilities.
+1. **Current Phase**: Discover and download videos from past 1-2 months (Optimized with Turbo Speed)
+2. **Future Phase**: Scheduled detection of new uploads (cron/scheduler)
+3. **Future Phase**: Video transcription service (Whisper integration)
+4. **Future Phase**: Horizontal scaling and PostgreSQL migration
+
+**Key Architectural Shift**: The system uses a **Decoupled Extraction Pipeline**. Extraction (CPU/RAM-heavy browser work) is done during Discovery to resolve the direct `stream_url`, while Download (Network-heavy IO) is done by a lightweight worker using `yt-dlp` + `aria2c`.
 
 ## Research Findings
 
 ### Michigan House Archive
 - **URL**: `https://house.mi.gov/VideoArchive`
 - **Format**: HTML page with expandable committee lists
-- **Video URL Pattern**: `/VideoArchivePlayer?video={FILENAME}.mp4`
-- **Filename Format**: `{COMMITTEE_CODE}-{MMDDYY}.mp4` (e.g., `HAGRI-022025.mp4`)
-- **Video Source**: Direct MP4 files served from `house.mi.gov`
-- **Scraping Method**: Parse HTML, expand committee sections, extract video links with dates
+- **Video Source**: Direct MP4 files or HLS manifests
+- **Turbo Resolution**: Uses Playwright to intercept the `.m3u8` manifest from the player page, with a fallback to direct MP4 links at `house.mi.gov/ArchiveVideoFiles/`.
+- **Scraping Method**: Parse HTML, expand committee sections, extract video metadata.
 
 ### Michigan Senate Archive  
 - **URL**: `https://cloud.castus.tv/vod/misenate/?page=ALL`
 - **Format**: React SPA using AWS Lambda APIs
-- **API Endpoint**: `POST https://tf4pr3wftk.execute-api.us-west-2.amazonaws.com/default/api/all`
-- **Video Storage**: CloudFront CDN at `https://dlttx48mxf9m3.cloudfront.net/outputs/{ID}/...`
-- **Date Format**: Videos have dates like "25-12-23" (YY-MM-DD format)
-- **Scraping Method**: Use API calls to fetch video metadata, extract video URLs from responses
+- **Video Source**: Amazon CloudFront CDN (Castus.tv)
+- **Turbo Resolution**: Uses the dedicated Castus Resolution API (`/upload/get`) to obtain signed/direct HLS manifests, bypassing 403 Forbidden errors.
+- **Scraping Method**: Use API calls to fetch video metadata, resolve stream URLs via Resolution API.
 
 ## Microservice Architecture
 
 ### Core Services
 
 #### 1. Video Discovery Service (`src/services/discovery_service.py`)
-**Purpose**: Discover videos from both archives within a date range
+**Purpose**: Discover videos from archives within a date range and resolve their high-speed download links.
 
 - **Interface**: `discover_videos(cutoff_date: datetime, limit: Optional[int] = None) -> List[VideoMetadata]`
 - **Responsibilities**:
   - Orchestrate scraping from House and Senate archives
+  - **Resolution Phase (Turbo)**: Execute Playwright or API calls to find the `stream_url`
   - Filter by cutoff date (past 1-2 months)
-  - Return standardized video metadata
-  - Handle errors gracefully with retries
+  - Return standardized video metadata with pre-resolved stream links
 - **Future Extension**: Can be called by scheduler service to detect new uploads
 
 #### 2. Video Download Service (`src/services/download_service.py`)
-**Purpose**: Download videos to local storage
+**Purpose**: High-speed video downloading to local storage.
 
 - **Interface**: `download_video(video_metadata: VideoMetadata, output_dir: Path) -> DownloadResult`
 - **Responsibilities**:
+  - **Turbo Download**: Force `yt-dlp` + `aria2c` for 16x parallel connection downloading
   - Check if video already downloaded (idempotent)
-  - Handle blob URLs if needed
+  - Handle blob URLs if needed via earlier resolution
   - Stream large files with progress tracking
   - Retry on failures
   - Return download status and file path
 - **Future Extension**: Can be triggered by discovery service or scheduler
 
 #### 3. State Management Service (`src/services/state_service.py`)
-**Purpose**: Track processed videos and system state
+**Purpose**: Track processed videos and system state. Designed for future migration to PostgreSQL.
 
 - **Interface**: 
   - `is_video_processed(video_id: str, source: str) -> bool`
@@ -73,7 +73,8 @@ The system is built with clear service boundaries, making it easy to extend with
     id TEXT PRIMARY KEY,
     source TEXT,  -- 'house' or 'senate'
     filename TEXT,
-    url TEXT,
+    url TEXT,     -- Original player page URL
+    stream_url TEXT, -- Resolved direct stream URL (Turbo Addition)
     date_recorded DATE,
     committee TEXT,
     date_discovered TIMESTAMP,
@@ -207,9 +208,10 @@ StateAffair-Interview/
 1. **Idempotency**: All operations safe to run multiple times
 2. **Modularity**: Clear service boundaries, easy to extend
 3. **State Management**: Centralized tracking prevents duplicates
-4. **Error Handling**: Graceful failures, retry logic, logging
-5. **Extensibility**: Future services can be added without modifying core
-6. **Production-Ready**: Proper logging, configuration management, error handling
+4. **Bandwidth Saturation**: Multi-connection `aria2c` logic ensures 100% network utilization
+5. **Decoupling**: Extraction (CPU/RAM/Browser) is separated from Downloading (Network/IO)
+6. **Error Handling**: Graceful failures, retry logic, logging
+7. **Production-Ready**: Proper logging, configuration management, error handling
 
 ## Configuration
 
@@ -225,26 +227,27 @@ download:
   output_directory: "./data/videos"
   max_retries: 3
   timeout_seconds: 300
-  chunk_size: 8192
+  chunk_size: 1048576 # 1MB for Turbo performance
+  aria2c_connections: 16
 
 database:
   path: "./data/database/videos.db"
   connection_pool_size: 5
-
-logging:
-  level: "INFO"
-  file: "./logs/video_service.log"
+  # Future PostgreSQL config
+  # url: "postgresql://user:pass@localhost:5432/videos"
 ```
 
 ## Dependencies
 
 - `requests` - HTTP requests
 - `beautifulsoup4` - HTML parsing  
-- `playwright` or `selenium` - For blob URL extraction (if needed)
+- `playwright` - Headless browser for manifest resolution
+- `yt-dlp` - Stream orchestration and metadata handling
+- `aria2` - External downloader for multi-threaded fragmentation
 - `python-dateutil` - Date parsing
 - `tqdm` - Progress bars
 - `pyyaml` - Configuration management
-- `sqlalchemy` - Database ORM (for future PostgreSQL migration)
+- `sqlalchemy` - Database ORM (Supports SQLite/PostgreSQL)
 - `click` - CLI interface
 
 ## Testing Strategy
@@ -255,19 +258,19 @@ logging:
 - Test idempotency (running multiple times)
 - Test error scenarios and retries
 
-## Implementation Todos
+## Implementation Todos (Phase 1 Status)
 
-1. **Data Models**: Create data models (VideoMetadata, ProcessingStatus) for standardized video information
-2. **Database Schema**: Design and implement database schema with SQLite for tracking processed videos
-3. **State Service**: Implement state service for tracking processed videos and preventing duplicates
-4. **House Scraper**: Implement House archive scraper to parse HTML and extract video links with dates
-5. **Senate Scraper**: Implement Senate archive scraper to call API and extract video metadata from JSON
-6. **Discovery Service**: Build discovery service that orchestrates both scrapers and filters by date
-7. **Video Downloader**: Implement video downloader with streaming, progress tracking, and retry logic
-8. **Blob Handler**: Implement blob URL handler for extracting direct video URLs when needed
-9. **Download Service**: Build download service that checks state, downloads videos, and updates state
-10. **Config Management**: Create configuration management system with YAML config and environment variables
-11. **Main CLI**: Build CLI entry point that orchestrates discovery and download services
-12. **Error Handling**: Add comprehensive error handling, retries, logging, and graceful failure recovery
-13. **Idempotency Tests**: Test that system is safe to run multiple times without duplicate processing
+1. [x] **Data Models**: Create data models (VideoMetadata, ProcessingStatus) for standardized video information
+2. [x] **Database Schema**: Design and implement database schema with SQLite (including `stream_url`)
+3. [x] **State Service**: Implement state service for tracking processed videos and preventing duplicates
+4. [x] **House Scraper**: Implement House archive scraper with Playwright stream resolution
+5. [x] **Senate Scraper**: Implement Senate archive scraper with official resolution API
+6. [x] **Discovery Service**: Build discovery service with decoupled resolution phase
+7. [x] **Video Downloader**: Implement Turbo downloader with `yt-dlp` and `aria2c` multi-threading
+8. [ ] **Blob Handler**: Deprecated (handled by resolution phase)
+9. [x] **Download Service**: Build download service that checks state, downloads videos, and updates state
+10. [x] **Config Management**: Create configuration management system with YAML config
+11. [x] **Main CLI**: Build CLI entry point that orchestrates discovery and download services
+12. [x] **Error Handling**: Add comprehensive error handling, retries, logging, and graceful failure recovery
+13. [x] **Idempotency Tests**: Test that system is safe to run multiple times without duplicate processing
 

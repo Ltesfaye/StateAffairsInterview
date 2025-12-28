@@ -34,6 +34,7 @@ class DiscoveryService:
         cutoff_days: int = 60,
         limit: Optional[int] = None,
         source: Optional[str] = None,
+        resolve_streams: bool = True,
     ) -> List[VideoMetadata]:
         """
         Discover videos from all archives
@@ -43,6 +44,7 @@ class DiscoveryService:
             cutoff_days: Number of days to look back (default: 60)
             limit: Maximum number of videos per source (None for all)
             source: Filter by source ("house" or "senate", None for all)
+            resolve_streams: Whether to resolve final stream URLs (expensive)
         
         Returns:
             List of VideoMetadata objects from all sources
@@ -62,6 +64,14 @@ class DiscoveryService:
                     cutoff_date=cutoff_date,
                     limit=limit,
                 )
+                
+                if resolve_streams:
+                    logger.info(f"Resolving stream URLs for {len(house_videos)} House videos...")
+                    for video in house_videos:
+                        stream_url = self.house_scraper.resolve_stream_url(video)
+                        if stream_url:
+                            video.stream_url = stream_url
+                            
                 all_videos.extend(house_videos)
                 logger.info(f"Found {len(house_videos)} videos from House")
             except Exception as e:
@@ -75,6 +85,14 @@ class DiscoveryService:
                     cutoff_date=cutoff_date,
                     limit=limit,
                 )
+                
+                if resolve_streams:
+                    logger.info(f"Resolving stream URLs for {len(senate_videos)} Senate videos...")
+                    for video in senate_videos:
+                        stream_url = self.senate_scraper.resolve_stream_url(video)
+                        if stream_url:
+                            video.stream_url = stream_url
+                            
                 all_videos.extend(senate_videos)
                 logger.info(f"Found {len(senate_videos)} videos from Senate")
             except Exception as e:

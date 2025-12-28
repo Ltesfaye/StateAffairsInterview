@@ -53,6 +53,12 @@ from .services import StateService, DiscoveryService, DownloadService
     type=click.Choice(["house", "senate"], case_sensitive=False),
     help="Filter by source (house or senate)",
 )
+@click.option(
+    "--resolve-streams",
+    is_flag=True,
+    default=True,
+    help="Resolve final stream URLs during discovery (required for House)",
+)
 def main(
     cutoff_date,
     cutoff_days,
@@ -62,6 +68,7 @@ def main(
     download_only,
     limit,
     source,
+    resolve_streams,
 ):
     """Discover and download videos from Michigan House and Senate archives"""
     
@@ -109,6 +116,7 @@ def main(
             cutoff_days=cutoff_days,
             limit=limit,
             source=source,
+            resolve_streams=resolve_streams,
         )
         
         # Mark videos as discovered

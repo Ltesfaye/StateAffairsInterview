@@ -188,7 +188,8 @@ class SenateScraper(BaseScraper):
                 return None
             
             # Extract video URL - resolve using the pattern or API
-            video_url = self._construct_cloudfront_url(str(video_id))
+            stream_url = self._construct_cloudfront_url(str(video_id))
+            player_url = f"https://cloud.castus.tv/vod/misenate/video/{video_id}"
             
             # Extract committee/playlist from agenda or metadata
             agenda = video_data.get("agenda", {})
@@ -205,7 +206,8 @@ class SenateScraper(BaseScraper):
                 video_id=str(video_id),
                 source="senate",
                 filename=filename,
-                url=video_url,
+                url=player_url,
+                stream_url=stream_url,
                 date_recorded=date_recorded,
                 committee=committee,
                 title=title,
@@ -213,7 +215,11 @@ class SenateScraper(BaseScraper):
         except Exception as e:
             logger.error(f"Error parsing video data: {e}", exc_info=True)
             return None
-    
+
+    def resolve_stream_url(self, video: VideoMetadata) -> Optional[str]:
+        """Resolve the Senate stream URL (already handled during discovery, but added for consistency)"""
+        return self._construct_cloudfront_url(video.video_id)
+
     def _construct_cloudfront_url(self, video_id: str) -> str:
         """Resolve the actual stream URL using the Castus API"""
         # Primary resolution method: Call the Castus upload/get API

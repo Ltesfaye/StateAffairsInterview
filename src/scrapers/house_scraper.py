@@ -126,9 +126,6 @@ class HouseScraper(BaseScraper):
             # Construct full URL
             video_url = urljoin(self.base_url, href)
             
-            # Extract committee code from filename (e.g., HAGRI from HAGRI-022025.mp4)
-            committee_code = filename.split("-")[0] if "-" in filename else None
-            
             return VideoMetadata(
                 video_id=video_id,
                 source="house",
@@ -141,5 +138,76 @@ class HouseScraper(BaseScraper):
             
         except Exception as e:
             logger.error(f"Error parsing video link {href}: {e}", exc_info=True)
+            return None
+
+    def resolve_stream_url(self, video: VideoMetadata) -> Optional[str]:
+        """Resolve the final stream URL using Playwright for Michigan House Archive"""
+        try:
+            import time
+            from urllib.parse import urlparse, parse_qs
+            from playwright.sync_api import sync_playwright
+            
+            player_url = video.url
+            logger.info(f"Resolving House stream URL via Playwright: {player_url}")
+            
+            # HOUSE SPECIFIC CHEAT: 
+            # Often, if the URL is ?video=NAME.mp4, the manifest is at /Videos/NAME.mp4/index.m3u8
+            parsed_query = parse_qs(urlparse(player_url).query)
+            video_param = parsed_query.get('video', [None])[0]
+            
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                page = context.new_page()
+                
+                m3u8_urls = []
+                
+                def handle_request(request):
+                    url = request.url
+                    if ".m3u8" in url or ".mpd" in url:
+                        m3u8_urls.append(url)
+                        
+                page.on("request", handle_request)
+
+                try:
+                    page.goto(player_url, wait_until="domcontentloaded", timeout=30000)
+                    time.sleep(2)
+                    
+                    # Search for play buttons in frames
+                    for frame in page.frames:
+                        try:
+                            play_btn = frame.wait_for_selector("button.vjs-big-play-button, .play-button, video", timeout=2000)
+                            if play_btn:
+                                play_btn.click(timeout=1000, force=True)
+                                time.sleep(1)
+                        except:
+                            pass
+
+                    # Wait loop for the stream to start
+                    for _ in range(10):
+                        if m3u8_urls:
+                            break
+                        time.sleep(1)
+                    
+                except Exception as e:
+                    logger.warning(f"Playwright navigation/click issue: {e}")
+ 
+                browser.close()
+                
+                if m3u8_urls:
+                    master = next((u for u in m3u8_urls if "master" in u or "index" in u), m3u8_urls[0])
+                    logger.info(f"Successfully resolved House manifest: {master}")
+                    return master
+
+            # FALLBACK: Direct MP4 link is the most reliable fallback for House
+            if video_param:
+                fallback_url = f"https://www.house.mi.gov/ArchiveVideoFiles/{video_param}"
+                logger.info(f"Playwright failed. Using direct MP4 fallback: {fallback_url}")
+                return fallback_url
+                
+            return None
+                    
+        except Exception as e:
+            logger.error(f"Error in House stream resolution: {e}")
             return None
 

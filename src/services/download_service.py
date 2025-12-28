@@ -61,25 +61,23 @@ class DownloadService:
         print(f"📥 Downloading: {video.video_id} ({video.source})")
         
         try:
-            # Extract direct video URL if needed
-            logger.debug(f"[DOWNLOAD_SERVICE] Original video URL: {video.url}")
-            # Skip blob handler for VideoArchivePlayer URLs - yt-dlp will handle them
-            if "VideoArchivePlayer" not in video.url and "blob:" not in video.url:
-                # Only use blob handler for actual blob URLs
-                logger.debug(f"[DOWNLOAD_SERVICE] Using blob handler for URL extraction")
-                video_url = self.blob_handler.extract_video_url(video.url)
-                if not video_url:
-                    video_url = video.url
+            # Determine best URL to use for download
+            # If stream_url is already resolved, use it directly (Turbo mode)
+            if video.stream_url:
+                video_url = video.stream_url
+                logger.info(f"[DOWNLOAD_SERVICE] Using already resolved stream URL: {video_url}")
             else:
-                logger.debug(f"[DOWNLOAD_SERVICE] Skipping blob handler, using original URL")
-                video_url = video.url
-            
-            logger.debug(f"[DOWNLOAD_SERVICE] After blob handler: {video_url}")
-            
-            # Use downloader's method to normalize URLs (but keep player pages for yt-dlp)
-            logger.debug(f"[DOWNLOAD_SERVICE] Calling downloader.get_direct_video_url()")
-            video_url = self.downloader.get_direct_video_url(video_url)
-            logger.debug(f"[DOWNLOAD_SERVICE] After get_direct_video_url: {video_url}")
+                # Fallback to original URL or try to resolve
+                logger.debug(f"[DOWNLOAD_SERVICE] Original video URL: {video.url}")
+                # Skip blob handler for known player pages - yt-dlp/aria2c will handle direct URLs
+                if "blob:" in video.url:
+                    logger.debug(f"[DOWNLOAD_SERVICE] Using blob handler for URL extraction")
+                    video_url = self.blob_handler.extract_video_url(video.url)
+                else:
+                    video_url = video.url
+                
+                # Normalize URL
+                video_url = self.downloader.get_direct_video_url(video_url)
             
             # Determine output filename
             output_filename = self._generate_filename(video)

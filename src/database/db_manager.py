@@ -18,6 +18,7 @@ class VideoRecord(Base):
     source = Column(String, nullable=False)  # 'house' or 'senate'
     filename = Column(String, nullable=False)
     url = Column(Text, nullable=False)
+    stream_url = Column(Text, nullable=True)
     date_recorded = Column(DateTime, nullable=False)
     committee = Column(String, nullable=True)
     title = Column(String, nullable=True)
@@ -61,6 +62,7 @@ class DatabaseManager:
         date_recorded: datetime,
         committee: Optional[str] = None,
         title: Optional[str] = None,
+        stream_url: Optional[str] = None,
     ) -> VideoRecord:
         """Create a new video record"""
         session = self.get_session()
@@ -70,6 +72,7 @@ class DatabaseManager:
                 source=source,
                 filename=filename,
                 url=url,
+                stream_url=stream_url,
                 date_recorded=date_recorded,
                 committee=committee,
                 title=title,
@@ -79,6 +82,30 @@ class DatabaseManager:
             session.commit()
             session.refresh(record)
             return record
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def update_stream_url(
+        self,
+        video_id: str,
+        source: str,
+        stream_url: str,
+    ):
+        """Update stream URL for a video"""
+        session = self.get_session()
+        try:
+            record = session.query(VideoRecord).filter_by(
+                id=video_id,
+                source=source
+            ).first()
+            
+            if record:
+                record.stream_url = stream_url
+                record.updated_at = datetime.now()
+                session.commit()
         except Exception as e:
             session.rollback()
             raise
