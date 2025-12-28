@@ -1,0 +1,21 @@
+uv # Core dependencies
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+python-dateutil>=2.8.2
+tqdm>=4.66.0
+pyyaml>=6.0.1
+click>=8.1.7
+
+# Database
+sqlalchemy>=2.0.23
+
+# Optional: For blob URL extraction if needed
+playwright>=1.40.0
+
+# Video download: For HLS streams (m3u8) and complex video sources
+yt-dlp>=2023.12.30
+
+# Development dependencies
+pytest>=7.4.3
+pytest-mock>=3.12.0
+

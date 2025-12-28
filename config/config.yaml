@@ -1,0 +1,20 @@
+discovery:
+  cutoff_days: 60  # Past 1-2 months
+  house_archive_url: "https://house.mi.gov/VideoArchive"
+  senate_archive_url: "https://cloud.castus.tv/vod/misenate/"
+  senate_api_url: "https://2kbyogxrg4.execute-api.us-west-2.amazonaws.com/61b3adc8124d7d000891ca5c/home/recent"
+
+download:
+  output_directory: "./data/videos"
+  max_retries: 3
+  timeout_seconds: 300
+  chunk_size: 8192
+
+database:
+  path: "./data/database/videos.db"
+  connection_pool_size: 5
+
+logging:
+  level: "INFO"
+  file: "./logs/video_service.log"
+
