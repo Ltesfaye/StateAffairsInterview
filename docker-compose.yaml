@@ -1,0 +1,94 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: stateaffair-db
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: stateaffair-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  discovery-worker:
+    build: .
+    container_name: stateaffair-discovery
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_PATH=/storage
+      - HOUSE_ARCHIVE_URL
+      - SENATE_API_URL
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/storage
+      - .:/app
+    command: python -m celery -A src.workers.celery_app worker -l info -Q discovery --concurrency=2
+
+  download-worker:
+    build: .
+    container_name: stateaffair-downloader
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_PATH=/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/storage
+      - .:/app
+    command: python -m celery -A src.workers.celery_app worker -l info -Q download --concurrency=2
+
+  transcription-worker:
+    build: .
+    container_name: stateaffair-transcriber
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_PATH=/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/storage
+      - .:/app
+    command: python -m celery -A src.workers.celery_app worker -l info -Q transcription --concurrency=1
+
+volumes:
+  postgres_data:
+  storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data

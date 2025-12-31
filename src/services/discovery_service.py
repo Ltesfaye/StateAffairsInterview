@@ -21,12 +21,14 @@ class DiscoveryService:
         senate_api_url: Optional[str] = None,
     ):
         """Initialize discovery service"""
-        self.house_scraper = house_scraper or HouseScraper(
-            archive_url=house_archive_url or "https://house.mi.gov/VideoArchive"
-        )
-        self.senate_scraper = senate_scraper or SenateScraper(
-            api_url=senate_api_url or "https://tf4pr3wftk.execute-api.us-west-2.amazonaws.com/default/api/all"
-        )
+        import os
+        
+        # Priority: 1. Argument, 2. Env Var, 3. Hardcoded default
+        h_url = house_archive_url or os.getenv("HOUSE_ARCHIVE_URL") or "https://house.mi.gov/VideoArchive"
+        s_url = senate_api_url or os.getenv("SENATE_API_URL") or "https://2kbyogxrg4.execute-api.us-west-2.amazonaws.com/61b3adc8124d7d000891ca5c/home/recent"
+        
+        self.house_scraper = house_scraper or HouseScraper(archive_url=h_url)
+        self.senate_scraper = senate_scraper or SenateScraper(api_url=s_url)
     
     def discover_videos(
         self,

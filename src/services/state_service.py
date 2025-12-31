@@ -61,10 +61,10 @@ class StateService:
         """Mark video as processed with given status"""
         download_status = status.download_status.value
         
-        self.db.update_download_status(
+        self.db.update_video_status(
             video_id=video.video_id,
             source=video.source,
-            status=download_status,
+            download_status=download_status,
             download_path=str(download_path) if download_path else None,
         )
     

@@ -1,0 +1,146 @@
+import os
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Optional
+
+from .celery_app import app
+
+from ..services.discovery_service import DiscoveryService
+from ..services.download_service import DownloadService
+from ..services.state_service import StateService
+from ..database.db_manager import get_db_manager
+from ..utils.audio_extractor import extract_audio
+from ..utils.logger import get_logger, generate_trace_id
+from ..services.transcription_service import get_provider
+from ..models.processing_status import DownloadStatus, AudioStatus, TranscriptionStatus
+
+logger = get_logger(__name__, service_name="celery-tasks")
+
+@app.task(name="src.workers.tasks.discover_videos_task", queue="discovery")
+def discover_videos_task(source: Optional[str] = None, days: int = 2):
+    """Discovery task to find and resolve videos"""
+    trace_id = generate_trace_id()
+    logger.info(f"Starting discovery task for source={source}, days={days}", extra={"trace_id": trace_id})
+    
+    db_manager = get_db_manager()
+    discovery_service = DiscoveryService()
+    state_service = StateService(db_manager)
+    
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    videos = discovery_service.discover_videos(cutoff_date=cutoff_date, source=source)
+    
+    for video in videos:
+        # Mark as discovered in DB
+        state_service.mark_video_discovered(video)
+        # Dispatch download task to download queue
+        download_video_task.apply_async(args=[video.video_id, video.source], queue="download")
+        
+    logger.info(f"Discovery complete. Dispatched {len(videos)} download tasks.", extra={"trace_id": trace_id})
+
+@app.task(name="src.workers.tasks.download_video_task", queue="download")
+def download_video_task(video_id: str, source: str):
+    """Download video and extract audio"""
+    trace_id = generate_trace_id()
+    logger.info(f"Starting download task for {video_id} ({source})", extra={"trace_id": trace_id})
+    
+    db_manager = get_db_manager()
+    state_service = StateService(db_manager)
+    
+    # Get metadata from DB
+    record = db_manager.get_video_record(video_id, source)
+    if not record:
+        logger.error(f"Video record not found in DB: {video_id}", extra={"trace_id": trace_id})
+        return
+
+    from ..models.video_metadata import VideoMetadata
+    video_meta = VideoMetadata.from_dict({
+        "id": record.id,
+        "source": record.source,
+        "filename": record.filename,
+        "url": record.url,
+        "stream_url": record.stream_url,
+        "date_recorded": record.date_recorded,
+        "committee": record.committee,
+        "title": record.title
+    })
+
+    # Download Service
+    output_dir = Path(os.getenv("STORAGE_PATH", "./data")) / "videos"
+    download_service = DownloadService(state_service=state_service, output_directory=output_dir)
+    
+    db_manager.update_video_status(video_id, source, download_status=DownloadStatus.IN_PROGRESS)
+    result = download_service.download_video(video_meta)
+    
+    if result.success:
+        logger.info(f"Download successful: {result.file_path}", extra={"trace_id": trace_id})
+        db_manager.update_video_status(video_id, source, download_status=DownloadStatus.DOWNLOADED, download_path=str(result.file_path))
+        
+        # Audio Extraction
+        db_manager.update_video_status(video_id, source, audio_status=AudioStatus.EXTRACTING)
+        audio_dir = Path(os.getenv("STORAGE_PATH", "./data")) / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        audio_path = extract_audio(str(result.file_path), output_dir=str(audio_dir))
+        if audio_path:
+            db_manager.update_video_status(video_id, source, audio_status=AudioStatus.EXTRACTED, audio_path=audio_path)
+            # Dispatch transcription task to transcription queue
+            transcribe_audio_task.apply_async(args=[video_id, source], queue="transcription")
+        else:
+            db_manager.update_video_status(video_id, source, audio_status=AudioStatus.FAILED)
+    else:
+        logger.error(f"Download failed: {result.error_message}", extra={"trace_id": trace_id})
+        db_manager.update_video_status(video_id, source, download_status=DownloadStatus.FAILED)
+
+@app.task(name="src.workers.tasks.transcribe_audio_task", queue="transcription")
+def transcribe_audio_task(video_id: str, source: str):
+    """Transcribe extracted audio using configured provider"""
+    trace_id = generate_trace_id()
+    logger.info(f"Starting transcription task for {video_id} ({source})", extra={"trace_id": trace_id})
+    
+    db_manager = get_db_manager()
+    record = db_manager.get_video_record(video_id, source)
+    
+    if not record or not record.audio_path:
+        logger.error(f"Audio path not found for {video_id}", extra={"trace_id": trace_id})
+        return
+
+    db_manager.update_video_status(video_id, source, transcription_status=TranscriptionStatus.IN_PROGRESS)
+    
+    try:
+        # Get provider settings from env
+        provider_type = os.getenv("TRANSCRIPTION_PROVIDER", "local")
+        kwargs = {
+            "whisper_model": os.getenv("WHISPER_MODEL", "base"),
+            "openai_api_key": os.getenv("OPENAI_API_KEY"),
+            "google_api_key": os.getenv("GOOGLE_API_KEY"),
+            "gemini_model": os.getenv("GEMINI_MODEL")
+        }
+        
+        provider = get_provider(provider_type, **kwargs)
+        result = provider.transcribe(Path(record.audio_path))
+        
+        # Save transcript to disk (VTT placeholder logic here)
+        transcript_dir = Path(os.getenv("STORAGE_PATH", "./data")) / "transcripts"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        
+        # In a real app, we'd generate VTT here. For now, we save text/json
+        text_path = transcript_dir / f"{video_id}.txt"
+        with open(text_path, "w") as f:
+            f.write(result["text"])
+            
+        # Register in Postgres Registry
+        db_manager.add_transcript(
+            video_id=video_id,
+            provider=provider_type,
+            content=result["text"],
+            raw_data=result.get("segments") or result, # Save segments if available
+            vtt_path=str(text_path) # Placeholder
+        )
+        
+        db_manager.update_video_status(video_id, source, transcription_status=TranscriptionStatus.COMPLETED)
+        logger.info(f"Transcription complete for {video_id}", extra={"trace_id": trace_id})
+        
+    except Exception as e:
+        logger.error(f"Transcription failed for {video_id}: {e}", extra={"trace_id": trace_id})
+        db_manager.update_video_status(video_id, source, transcription_status=TranscriptionStatus.FAILED)
+
