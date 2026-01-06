@@ -226,6 +226,50 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def search_transcripts(self, query: str) -> List[dict]:
+        """Search across all transcript records"""
+        session = self.get_session()
+        try:
+            # Simple ILIKE search for both Postgres and SQLite
+            results = session.query(TranscriptRecord, VideoRecord).join(
+                VideoRecord, TranscriptRecord.video_id == VideoRecord.id
+            ).filter(TranscriptRecord.content.ilike(f"%{query}%")).all()
+            
+            output = []
+            for transcript, video in results:
+                output.append({
+                    "video_id": video.id,
+                    "title": video.title,
+                    "source": video.source,
+                    "date": video.date_recorded,
+                    "content": transcript.content,
+                    "provider": transcript.provider
+                })
+            return output
+        finally:
+            session.close()
+
+    def get_stats(self) -> dict:
+        """Get high-level pipeline stats"""
+        session = self.get_session()
+        try:
+            total = session.query(VideoRecord).count()
+            downloaded = session.query(VideoRecord).filter_by(download_status="downloaded").count()
+            transcribed = session.query(VideoRecord).filter_by(transcription_status="completed").count()
+            failed = session.query(VideoRecord).filter(
+                (VideoRecord.download_status == "failed") | 
+                (VideoRecord.transcription_status == "failed")
+            ).count()
+            
+            return {
+                "total": total,
+                "downloaded": downloaded,
+                "transcribed": transcribed,
+                "failed": failed
+            }
+        finally:
+            session.close()
+
 
 # Global database manager instance
 _db_manager: Optional[DatabaseManager] = None

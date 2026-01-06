@@ -61,7 +61,9 @@ def test_infra():
     """Test connection to DB and Redis"""
     try:
         db = get_db_manager()
-        db.get_session().execute(click.echo("Testing DB connection...") or "SELECT 1")
+        # Fix: call execute on a text object
+        from sqlalchemy import text
+        db.get_session().execute(text("SELECT 1"))
         click.echo("Postgres: OK")
         
         import redis
@@ -70,6 +72,13 @@ def test_infra():
         click.echo("Redis: OK")
     except Exception as e:
         click.echo(f"Infra test failed: {e}")
+
+@cli.command()
+def requeue_failed():
+    """Manually trigger requeue of failed tasks"""
+    from .workers.tasks import requeue_failed_tasks
+    requeue_failed_tasks.delay()
+    click.echo("Dispatched requeue_failed_tasks to Celery.")
 
 if __name__ == "__main__":
     cli()

@@ -144,3 +144,42 @@ def transcribe_audio_task(video_id: str, source: str):
         logger.error(f"Transcription failed for {video_id}: {e}", extra={"trace_id": trace_id})
         db_manager.update_video_status(video_id, source, transcription_status=TranscriptionStatus.FAILED)
 
+@app.task(name="src.workers.tasks.requeue_failed_tasks", queue="transcription")
+def requeue_failed_tasks():
+    """Find failed tasks and re-queue them if files exist, otherwise restart from download"""
+    db_manager = get_db_manager()
+    session = db_manager.get_session()
+    from ..database.db_manager import VideoRecord
+    from ..models.processing_status import DownloadStatus, TranscriptionStatus
+    
+    # 1. Find failed transcriptions
+    failed_transcripts = session.query(VideoRecord).filter(VideoRecord.transcription_status == "failed").all()
+    requeued_count = 0
+    restarted_count = 0
+    
+    for record in failed_transcripts:
+        if record.audio_path and os.path.exists(record.audio_path):
+            logger.info(f"Re-queueing transcription for {record.id} (audio exists)")
+            transcribe_audio_task.delay(record.id, record.source)
+            requeued_count += 1
+        else:
+            logger.info(f"Restarting download for {record.id} (audio/video missing)")
+            db_manager.update_video_status(
+                record.id, record.source, 
+                download_status=DownloadStatus.PENDING,
+                transcription_status=TranscriptionStatus.PENDING
+            )
+            download_video_task.delay(record.id, record.source)
+            restarted_count += 1
+
+    # 2. Find failed downloads
+    failed_downloads = session.query(VideoRecord).filter(VideoRecord.download_status == "failed").all()
+    for record in failed_downloads:
+        logger.info(f"Retrying download for {record.id}")
+        db_manager.update_video_status(record.id, record.source, download_status=DownloadStatus.PENDING)
+        download_video_task.delay(record.id, record.source)
+        restarted_count += 1
+    
+    session.close()
+    return {"requeued": requeued_count, "restarted": restarted_count}
+

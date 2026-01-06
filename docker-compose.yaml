@@ -84,6 +84,26 @@ services:
       - .:/app
     command: python -m celery -A src.workers.celery_app worker -l info -Q transcription --concurrency=1
 
+  dashboard:
+    build: .
+    container_name: stateaffair-dashboard
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_PATH=/storage
+    ports:
+      - "8501:8501"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/storage
+      - .:/app
+    command: streamlit run src/dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+
 volumes:
   postgres_data:
   storage:

@@ -1,0 +1,20 @@
+# Exclude the massive local data folder from the Docker build context
+data/
+
+# Exclude any potential internal name references
+storage/
+
+# Exclude python environment and cache
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Exclude git and IDE metadata
+.git/
+.cursor/
+# .env
+
+# Exclude MacOS system files
+.DS_Store
+

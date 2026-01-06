@@ -141,73 +141,70 @@ class HouseScraper(BaseScraper):
             return None
 
     def resolve_stream_url(self, video: VideoMetadata) -> Optional[str]:
-        """Resolve the final stream URL using Playwright for Michigan House Archive"""
+        """Resolve the final stream URL for House videos - direct MP4 URL"""
         try:
-            import time
             from urllib.parse import urlparse, parse_qs
-            from playwright.sync_api import sync_playwright
             
             player_url = video.url
-            logger.info(f"Resolving House stream URL via Playwright: {player_url}")
+            logger.info(f"Resolving House stream URL: {player_url}")
             
-            # HOUSE SPECIFIC CHEAT: 
-            # Often, if the URL is ?video=NAME.mp4, the manifest is at /Videos/NAME.mp4/index.m3u8
+            # Extract video filename from URL
+            # Format: /VideoArchivePlayer?video=HCOMT-022525.mp4
             parsed_query = parse_qs(urlparse(player_url).query)
             video_param = parsed_query.get('video', [None])[0]
             
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                page = context.new_page()
+            if not video_param:
+                logger.warning(f"Could not extract video parameter from URL: {player_url}")
+                return None
+            
+            # Construct direct MP4 URL
+            direct_url = f"https://www.house.mi.gov/ArchiveVideoFiles/{video_param}"
+            logger.info(f"Using direct MP4 URL: {direct_url}")
+            
+            # Verify the file exists with a HEAD request
+            try:
+                response = requests.head(
+                    direct_url,
+                    timeout=10,
+                    verify=False,
+                    allow_redirects=True,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    }
+                )
                 
-                m3u8_urls = []
-                
-                def handle_request(request):
-                    url = request.url
-                    if ".m3u8" in url or ".mpd" in url:
-                        m3u8_urls.append(url)
-                        
-                page.on("request", handle_request)
-
-                try:
-                    page.goto(player_url, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(2)
+                # Check if the URL is valid
+                if response.status_code == 200:
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    content_length = response.headers.get('Content-Length', '0')
                     
-                    # Search for play buttons in frames
-                    for frame in page.frames:
-                        try:
-                            play_btn = frame.wait_for_selector("button.vjs-big-play-button, .play-button, video", timeout=2000)
-                            if play_btn:
-                                play_btn.click(timeout=1000, force=True)
-                                time.sleep(1)
-                        except:
-                            pass
-
-                    # Wait loop for the stream to start
-                    for _ in range(10):
-                        if m3u8_urls:
-                            break
-                        time.sleep(1)
-                    
-                except Exception as e:
-                    logger.warning(f"Playwright navigation/click issue: {e}")
- 
-                browser.close()
-                
-                if m3u8_urls:
-                    master = next((u for u in m3u8_urls if "master" in u or "index" in u), m3u8_urls[0])
-                    logger.info(f"Successfully resolved House manifest: {master}")
-                    return master
-
-            # FALLBACK: Direct MP4 link is the most reliable fallback for House
-            if video_param:
-                fallback_url = f"https://www.house.mi.gov/ArchiveVideoFiles/{video_param}"
-                logger.info(f"Playwright failed. Using direct MP4 fallback: {fallback_url}")
-                return fallback_url
-                
-            return None
+                    # Verify it's actually a video file, not HTML error page
+                    if 'video' in content_type or 'mp4' in content_type or int(content_length) > 0:
+                        logger.info(f"✅ Direct MP4 URL verified: {direct_url} (size: {content_length} bytes)")
+                        return direct_url
+                    else:
+                        logger.warning(f"Direct URL returned non-video content type: {content_type}")
+                elif response.status_code in [301, 302, 303, 307, 308]:
+                    # Follow redirect and check final URL
+                    final_url = response.headers.get('Location', direct_url)
+                    logger.info(f"Direct URL redirects to: {final_url}")
+                    # Try the redirect URL
+                    redirect_check = requests.head(final_url, timeout=10, verify=False, allow_redirects=True)
+                    if redirect_check.status_code == 200:
+                        content_type = redirect_check.headers.get('Content-Type', '').lower()
+                        if 'video' in content_type or 'mp4' in content_type:
+                            logger.info(f"✅ Redirect URL verified: {final_url}")
+                            return final_url
+                else:
+                    logger.warning(f"Direct URL returned status {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Failed to verify direct MP4 URL: {e}")
+            
+            # If verification fails, still return the URL (let downloader handle it)
+            logger.warning(f"Could not verify URL, but returning direct URL anyway: {direct_url}")
+            return direct_url
                     
         except Exception as e:
-            logger.error(f"Error in House stream resolution: {e}")
+            logger.error(f"Error in House stream resolution: {e}", exc_info=True)
             return None
 

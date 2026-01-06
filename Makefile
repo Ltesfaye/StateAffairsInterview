@@ -6,11 +6,17 @@ ifneq ("$(wildcard .env)","")
     export $(shell sed 's/=.*//' .env)
 endif
 
-dev: build
-	docker-compose up -d
+dev: launch
 
 build:
 	docker-compose build
+	$(MAKE) launch
+
+launch:
+	docker-compose up -d
+	@echo "Waiting for dashboard to start..."
+	@(sleep 5 && open http://localhost:8501 || echo "Could not open browser automatically. Visit http://localhost:8501") &
+	docker-compose logs -f
 
 stop:
 	docker-compose stop

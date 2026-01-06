@@ -73,10 +73,10 @@ class VideoDownloader:
             )
         
         # Use yt-dlp for:
-        # 1. HLS streams (.m3u8)
-        # 2. House player pages (VideoArchivePlayer) - Brightcove HLS
-        # 3. Senate player pages (cloud.castus.tv)
-        # 4. Any URL from House or Senate domains (to enable multi-threaded aria2c)
+        # 1. HLS streams (.m3u8) - primarily for Senate videos
+        # 2. Senate player pages (cloud.castus.tv)
+        # 3. Any URL from House or Senate domains (to enable multi-threaded aria2c via aria2c)
+        # Note: House videos are now direct MP4 URLs, but yt-dlp with aria2c still provides faster downloads
         use_ytdlp = (
             url.endswith('.m3u8') or 
             '.m3u8' in url or 
