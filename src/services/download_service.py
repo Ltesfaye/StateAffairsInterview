@@ -67,17 +67,27 @@ class DownloadService:
                 video_url = video.stream_url
                 logger.info(f"[DOWNLOAD_SERVICE] Using already resolved stream URL: {video_url}")
             else:
-                # Fallback to original URL or try to resolve
-                logger.debug(f"[DOWNLOAD_SERVICE] Original video URL: {video.url}")
-                # Skip blob handler for known player pages - yt-dlp/aria2c will handle direct URLs
-                if "blob:" in video.url:
-                    logger.debug(f"[DOWNLOAD_SERVICE] Using blob handler for URL extraction")
-                    video_url = self.blob_handler.extract_video_url(video.url)
-                else:
-                    video_url = video.url
+                # Resolve stream URL if not set (needed for House videos especially)
+                logger.info(f"[DOWNLOAD_SERVICE] Stream URL not set, resolving for {video.video_id} ({video.source})")
+                video.stream_url = self._resolve_stream_url(video)
                 
-                # Normalize URL
-                video_url = self.downloader.get_direct_video_url(video_url)
+                if video.stream_url:
+                    video_url = video.stream_url
+                    logger.info(f"[DOWNLOAD_SERVICE] Resolved stream URL: {video_url}")
+                    # Update stream URL in database
+                    self.state_service.db.update_stream_url(video.video_id, video.source, video.stream_url)
+                else:
+                    # Fallback to original URL or try to resolve
+                    logger.warning(f"[DOWNLOAD_SERVICE] Could not resolve stream URL, using original URL: {video.url}")
+                    # Skip blob handler for known player pages - yt-dlp/aria2c will handle direct URLs
+                    if "blob:" in video.url:
+                        logger.debug(f"[DOWNLOAD_SERVICE] Using blob handler for URL extraction")
+                        video_url = self.blob_handler.extract_video_url(video.url)
+                    else:
+                        video_url = video.url
+                    
+                    # Normalize URL
+                    video_url = self.downloader.get_direct_video_url(video_url)
             
             # Determine output filename
             output_filename = self._generate_filename(video)
@@ -120,6 +130,26 @@ class DownloadService:
                 video_id=video.video_id,
                 error_message=str(e),
             )
+    
+    def _resolve_stream_url(self, video: VideoMetadata) -> Optional[str]:
+        """Resolve stream URL using appropriate scraper"""
+        try:
+            if video.source == "house":
+                from ..scrapers import HouseScraper
+                scraper = HouseScraper()
+                stream_url = scraper.resolve_stream_url(video)
+                return stream_url
+            elif video.source == "senate":
+                from ..scrapers import SenateScraper
+                scraper = SenateScraper()
+                stream_url = scraper.resolve_stream_url(video)
+                return stream_url
+            else:
+                logger.warning(f"[DOWNLOAD_SERVICE] Unknown source: {video.source}, cannot resolve stream URL")
+                return None
+        except Exception as e:
+            logger.error(f"[DOWNLOAD_SERVICE] Error resolving stream URL for {video.video_id}: {e}", exc_info=True)
+            return None
     
     def _generate_filename(self, video: VideoMetadata) -> str:
         """Generate safe filename for video"""

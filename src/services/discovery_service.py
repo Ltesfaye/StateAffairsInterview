@@ -37,35 +37,54 @@ class DiscoveryService:
         limit: Optional[int] = None,
         source: Optional[str] = None,
         resolve_streams: bool = True,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> List[VideoMetadata]:
         """
         Discover videos from all archives
         
         Args:
-            cutoff_date: Only return videos after this date (if None, uses cutoff_days)
-            cutoff_days: Number of days to look back (default: 60)
+            cutoff_date: Only return videos after this date (if None and no start_date, uses cutoff_days)
+            cutoff_days: Number of days to look back (default: 60) - used if cutoff_date and start_date are None
             limit: Maximum number of videos per source (None for all)
             source: Filter by source ("house" or "senate", None for all)
             resolve_streams: Whether to resolve final stream URLs (expensive)
+            start_date: Start of date range (if provided with end_date, uses date range instead of cutoff_date)
+            end_date: End of date range (if provided with start_date, uses date range instead of cutoff_date)
         
         Returns:
             List of VideoMetadata objects from all sources
         """
-        if cutoff_date is None:
-            cutoff_date = datetime.now() - timedelta(days=cutoff_days)
-        
-        logger.info(f"Discovering videos after {cutoff_date.date()}")
+        # Determine date filtering approach
+        if start_date and end_date:
+            logger.info(f"Discovering videos between {start_date.date()} and {end_date.date()}")
+            use_date_range = True
+        else:
+            if cutoff_date is None:
+                cutoff_date = datetime.now() - timedelta(days=cutoff_days)
+            logger.info(f"Discovering videos after {cutoff_date.date()}")
+            use_date_range = False
         
         all_videos = []
+        house_count = 0
+        senate_count = 0
         
         # Discover from House archive
         if source is None or source.lower() == "house":
             try:
                 logger.info("Discovering from House archive...")
-                house_videos = self.house_scraper.discover_videos(
-                    cutoff_date=cutoff_date,
-                    limit=limit,
-                )
+                if use_date_range:
+                    house_videos = self.house_scraper.discover_videos(
+                        cutoff_date=start_date,  # Used as fallback
+                        start_date=start_date,
+                        end_date=end_date,
+                        limit=limit,
+                    )
+                else:
+                    house_videos = self.house_scraper.discover_videos(
+                        cutoff_date=cutoff_date,
+                        limit=limit,
+                    )
                 
                 if resolve_streams:
                     logger.info(f"Resolving stream URLs for {len(house_videos)} House videos...")
@@ -75,7 +94,8 @@ class DiscoveryService:
                             video.stream_url = stream_url
                             
                 all_videos.extend(house_videos)
-                logger.info(f"Found {len(house_videos)} videos from House")
+                house_count = len(house_videos)
+                logger.info(f"Found {house_count} videos from House")
             except Exception as e:
                 logger.error(f"Error discovering House videos: {e}", exc_info=True)
         
@@ -83,10 +103,18 @@ class DiscoveryService:
         if source is None or source.lower() == "senate":
             try:
                 logger.info("Discovering from Senate archive...")
-                senate_videos = self.senate_scraper.discover_videos(
-                    cutoff_date=cutoff_date,
-                    limit=limit,
-                )
+                if use_date_range:
+                    senate_videos = self.senate_scraper.discover_videos(
+                        cutoff_date=start_date,  # Used as fallback
+                        start_date=start_date,
+                        end_date=end_date,
+                        limit=limit,
+                    )
+                else:
+                    senate_videos = self.senate_scraper.discover_videos(
+                        cutoff_date=cutoff_date,
+                        limit=limit,
+                    )
                 
                 if resolve_streams:
                     logger.info(f"Resolving stream URLs for {len(senate_videos)} Senate videos...")
@@ -96,10 +124,11 @@ class DiscoveryService:
                             video.stream_url = stream_url
                             
                 all_videos.extend(senate_videos)
-                logger.info(f"Found {len(senate_videos)} videos from Senate")
+                senate_count = len(senate_videos)
+                logger.info(f"Found {senate_count} videos from Senate")
             except Exception as e:
                 logger.error(f"Error discovering Senate videos: {e}", exc_info=True)
         
-        logger.info(f"Total videos discovered: {len(all_videos)}")
+        logger.info(f"Total videos discovered: {len(all_videos)} (House: {house_count}, Senate: {senate_count})")
         return all_videos
 

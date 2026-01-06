@@ -31,68 +31,144 @@ class HouseScraper(BaseScraper):
         self,
         cutoff_date: datetime,
         limit: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> List[VideoMetadata]:
         """Discover videos from House archive"""
-        logger.info(f"Discovering videos from House archive after {cutoff_date.date()}")
+        # Determine date range for filtering
+        if start_date and end_date:
+            logger.info(f"Discovering videos from House archive between {start_date.date()} and {end_date.date()}")
+            filter_start = start_date
+            filter_end = end_date
+        else:
+            logger.info(f"Discovering videos from House archive after {cutoff_date.date()}")
+            filter_start = cutoff_date
+            filter_end = None
         
         try:
-            # Fetch the archive page
-            # Note: verify=False is used here due to SSL certificate issues on some systems
-            # In production, you may want to fix SSL certificates or use verify=True
-            response = requests.get(
-                self.archive_url,
-                timeout=30,
-                verify=False,  # Disable SSL verification (fix certificates in production)
-            )
-            response.raise_for_status()
+            # Calculate which years to fetch based on date range
+            if filter_end:
+                years_to_fetch = list(range(filter_start.year, filter_end.year + 1))
+            else:
+                years_to_fetch = list(range(filter_start.year, datetime.now().year + 1))
             
-            # Parse HTML
-            soup = BeautifulSoup(response.content, "html.parser")
+            logger.info(f"Fetching House archive for years: {years_to_fetch}")
             
-            # Find all committee sections
-            videos = []
-            committee_items = soup.find_all("li")
+            all_videos = []
             
-            for item in committee_items:
-                # Find committee name and video count
-                strong_tag = item.find("strong")
-                if not strong_tag:
-                    continue
-                
-                committee_text = strong_tag.get_text(strip=True)
-                committee_name = committee_text.split("|")[0].strip()
-                
-                # Find video links in this committee
-                video_links = item.find_all("a", href=True)
-                
-                for link in video_links:
-                    href = link.get("href", "")
-                    link_text = link.get_text(strip=True)
-                    
-                    # Check if this is a video link
-                    if "/VideoArchivePlayer?video=" in href:
-                        video = self._parse_video_link(
-                            href=href,
-                            link_text=link_text,
-                            committee=committee_name,
-                            cutoff_date=cutoff_date,
-                        )
+            # Fetch each year's archive
+            for year in years_to_fetch:
+                try:
+                    html_content = self._fetch_archive_for_year(year)
+                    if html_content:
+                        year_videos = self._parse_archive_html(html_content, filter_start, filter_end, limit, len(all_videos))
+                        all_videos.extend(year_videos)
                         
-                        if video:
-                            videos.append(video)
-                            
-                            if limit and len(videos) >= limit:
-                                break
-                
-                if limit and len(videos) >= limit:
-                    break
+                        if limit and len(all_videos) >= limit:
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to fetch archive for year {year}: {e}")
+                    continue
             
-            logger.info(f"Discovered {len(videos)} videos from House archive")
-            return videos
+            # Apply final date filtering
+            if filter_end:
+                filtered_videos = [
+                    v for v in all_videos
+                    if filter_start <= v.date_recorded <= filter_end
+                ]
+            else:
+                filtered_videos = [
+                    v for v in all_videos
+                    if v.date_recorded >= filter_start
+                ]
+            
+            # Apply limit if specified
+            if limit and len(filtered_videos) > limit:
+                filtered_videos = filtered_videos[:limit]
+            
+            logger.info(f"Discovered {len(filtered_videos)} videos from House archive")
+            return filtered_videos
             
         except Exception as e:
             logger.error(f"Error discovering House videos: {e}", exc_info=True)
             return []
+    
+    def _fetch_archive_for_year(self, year: int) -> Optional[str]:
+        """Fetch archive HTML for a specific year using handler endpoint"""
+        try:
+            handler_url = f"{self.archive_url}?handler=ArchiveVideoPartial&Year={year}&Type=All&Date="
+            logger.debug(f"Fetching House archive for year {year}: {handler_url}")
+            
+            response = requests.get(
+                handler_url,
+                timeout=30,
+                verify=False,  # Disable SSL verification (fix certificates in production)
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }
+            )
+            response.raise_for_status()
+            
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"Error fetching archive for year {year}: {e}", exc_info=True)
+            return None
+    
+    def _parse_archive_html(
+        self,
+        html_content: str,
+        filter_start: datetime,
+        filter_end: Optional[datetime],
+        limit: Optional[int],
+        current_count: int,
+    ) -> List[VideoMetadata]:
+        """Parse HTML content and extract video metadata"""
+        soup = BeautifulSoup(html_content, "html.parser")
+        videos = []
+        
+        # Find all committee sections
+        committee_items = soup.find_all("li")
+        
+        for item in committee_items:
+            # Find committee name and video count
+            strong_tag = item.find("strong")
+            if not strong_tag:
+                continue
+            
+            committee_text = strong_tag.get_text(strip=True)
+            committee_name = committee_text.split("|")[0].strip()
+            
+            # Find video links in this committee
+            video_links = item.find_all("a", href=True)
+            
+            for link in video_links:
+                href = link.get("href", "")
+                link_text = link.get_text(strip=True)
+                
+                # Check if this is a video link
+                if "/VideoArchivePlayer?video=" in href:
+                    video = self._parse_video_link(
+                        href=href,
+                        link_text=link_text,
+                        committee=committee_name,
+                        cutoff_date=filter_start,
+                    )
+                    
+                    if video:
+                        # Apply end date filter if specified
+                        if filter_end and video.date_recorded > filter_end:
+                            continue
+                        
+                        videos.append(video)
+                        
+                        if limit and (current_count + len(videos)) >= limit:
+                            break
+            
+            if limit and (current_count + len(videos)) >= limit:
+                break
+        
+        return videos
     
     def _parse_video_link(
         self,
@@ -119,7 +195,7 @@ class HouseScraper(BaseScraper):
                 logger.warning(f"Could not parse date from: {link_text}")
                 return None
             
-            # Filter by cutoff date
+            # Filter by cutoff date (basic filter, more filtering happens in discover_videos)
             if date_recorded < cutoff_date:
                 return None
             

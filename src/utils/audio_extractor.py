@@ -26,6 +26,8 @@ def extract_audio(video_path: str, output_dir: Optional[str] = None) -> Optional
     try:
         command = [
             "ffmpeg", "-i", str(video_path_obj),
+            "-ss", "0",          # Start at zero
+            "-map_metadata", "-1", # Strip metadata that might contain time offsets
             "-vn",              # Disable video
             "-acodec", "pcm_s16le", # 16-bit PCM
             "-ar", "16000",     # 16kHz

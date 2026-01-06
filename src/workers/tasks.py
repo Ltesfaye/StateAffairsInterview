@@ -17,17 +17,68 @@ from ..models.processing_status import DownloadStatus, AudioStatus, Transcriptio
 logger = get_logger(__name__, service_name="celery-tasks")
 
 @app.task(name="src.workers.tasks.discover_videos_task", queue="discovery")
-def discover_videos_task(source: Optional[str] = None, days: int = 2):
+def discover_videos_task(
+    source: Optional[str] = None,
+    days: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     """Discovery task to find and resolve videos"""
     trace_id = generate_trace_id()
-    logger.info(f"Starting discovery task for source={source}, days={days}", extra={"trace_id": trace_id})
+    
+    # Determine date parameters
+    if start_date and end_date:
+        # Parse ISO format date strings (YYYY-MM-DD format from date_input)
+        if isinstance(start_date, str):
+            try:
+                # Handle date-only strings (YYYY-MM-DD)
+                if len(start_date) == 10:
+                    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                else:
+                    # Handle datetime strings with timezone
+                    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            except ValueError:
+                start_dt = datetime.fromisoformat(start_date)
+        else:
+            start_dt = start_date
+        
+        if isinstance(end_date, str):
+            try:
+                # Handle date-only strings (YYYY-MM-DD)
+                if len(end_date) == 10:
+                    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                    # Set to end of day
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                else:
+                    # Handle datetime strings with timezone
+                    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            except ValueError:
+                end_dt = datetime.fromisoformat(end_date)
+        else:
+            end_dt = end_date
+        
+        logger.info(f"Starting discovery task for source={source}, date_range={start_dt.date()} to {end_dt.date()}", extra={"trace_id": trace_id})
+    else:
+        # Fallback to days-based discovery
+        days = days or 2
+        logger.info(f"Starting discovery task for source={source}, days={days}", extra={"trace_id": trace_id})
+        start_dt = None
+        end_dt = None
     
     db_manager = get_db_manager()
     discovery_service = DiscoveryService()
     state_service = StateService(db_manager)
     
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-    videos = discovery_service.discover_videos(cutoff_date=cutoff_date, source=source)
+    # Discover videos
+    if start_dt and end_dt:
+        videos = discovery_service.discover_videos(
+            start_date=start_dt,
+            end_date=end_dt,
+            source=source,
+        )
+    else:
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        videos = discovery_service.discover_videos(cutoff_date=cutoff_date, source=source)
     
     for video in videos:
         # Mark as discovered in DB

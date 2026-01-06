@@ -14,14 +14,18 @@ class BaseScraper(ABC):
     def discover_videos(
         self,
         cutoff_date: datetime,
-        limit: int = None,
+        limit: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> List[VideoMetadata]:
         """
-        Discover videos from archive after cutoff date
+        Discover videos from archive
         
         Args:
-            cutoff_date: Only return videos recorded after this date
+            cutoff_date: Only return videos recorded after this date (used if start_date/end_date not provided)
             limit: Maximum number of videos to return (None for all)
+            start_date: Start of date range (if provided with end_date, uses date range instead of cutoff_date)
+            end_date: End of date range (if provided with start_date, uses date range instead of cutoff_date)
         
         Returns:
             List of VideoMetadata objects

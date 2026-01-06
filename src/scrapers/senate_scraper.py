@@ -36,9 +36,17 @@ class SenateScraper(BaseScraper):
         self,
         cutoff_date: datetime,
         limit: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> List[VideoMetadata]:
         """Discover videos from Senate archive"""
-        logger.info(f"Discovering videos from Senate archive after {cutoff_date.date()}")
+        # Determine date filtering approach
+        if start_date and end_date:
+            logger.info(f"Discovering videos from Senate archive between {start_date.date()} and {end_date.date()}")
+            use_date_range = True
+        else:
+            logger.info(f"Discovering videos from Senate archive after {cutoff_date.date()}")
+            use_date_range = False
         
         try:
             # Call API to get all videos
@@ -95,10 +103,18 @@ class SenateScraper(BaseScraper):
                 )
             
             for video_data in video_list:
-                video = self._parse_video_data(
-                    video_data=video_data,
-                    cutoff_date=cutoff_date,
-                )
+                if use_date_range:
+                    video = self._parse_video_data(
+                        video_data=video_data,
+                        cutoff_date=cutoff_date,  # Used as fallback
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                else:
+                    video = self._parse_video_data(
+                        video_data=video_data,
+                        cutoff_date=cutoff_date,
+                    )
                 
                 if video:
                     videos.append(video)
@@ -134,6 +150,8 @@ class SenateScraper(BaseScraper):
         self,
         video_data: Dict[str, Any],
         cutoff_date: datetime,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> Optional[VideoMetadata]:
         """Parse video data from API response into VideoMetadata"""
         try:
@@ -165,27 +183,54 @@ class SenateScraper(BaseScraper):
                 logger.warning(f"Could not parse date from: {date_string}")
                 return None
             
-            # Normalize timezones for comparison
-            # If date_recorded is timezone-aware but cutoff_date is naive, make cutoff_date aware
-            # Or vice versa - normalize both to same timezone awareness
-            if date_recorded.tzinfo is not None and cutoff_date.tzinfo is None:
-                # date_recorded is aware, cutoff_date is naive - make cutoff_date aware (UTC)
+            # Apply date filtering
+            if start_date and end_date:
+                # Date range filtering
+                # Normalize timezones for comparison - make all aware or all naive
                 from datetime import timezone
-                cutoff_date_aware = cutoff_date.replace(tzinfo=timezone.utc)
-                date_to_compare = date_recorded
-            elif date_recorded.tzinfo is None and cutoff_date.tzinfo is not None:
-                # date_recorded is naive, cutoff_date is aware - make date_recorded aware (UTC)
-                from datetime import timezone
-                date_to_compare = date_recorded.replace(tzinfo=timezone.utc)
-                cutoff_date_aware = cutoff_date
+                
+                # Normalize date_recorded
+                if date_recorded.tzinfo is None:
+                    date_to_compare = date_recorded.replace(tzinfo=timezone.utc)
+                else:
+                    date_to_compare = date_recorded
+                
+                # Normalize start_date
+                if start_date.tzinfo is None:
+                    start_date_normalized = start_date.replace(tzinfo=timezone.utc)
+                else:
+                    start_date_normalized = start_date
+                
+                # Normalize end_date
+                if end_date.tzinfo is None:
+                    end_date_normalized = end_date.replace(tzinfo=timezone.utc)
+                else:
+                    end_date_normalized = end_date
+                
+                # Filter by date range
+                if not (start_date_normalized <= date_to_compare <= end_date_normalized):
+                    return None
             else:
-                # Both same type, use as-is
-                date_to_compare = date_recorded
-                cutoff_date_aware = cutoff_date
-            
-            # Filter by cutoff date
-            if date_to_compare < cutoff_date_aware:
-                return None
+                # Cutoff date filtering (backward compatible)
+                # Normalize timezones for comparison
+                if date_recorded.tzinfo is not None and cutoff_date.tzinfo is None:
+                    # date_recorded is aware, cutoff_date is naive - make cutoff_date aware (UTC)
+                    from datetime import timezone
+                    cutoff_date_aware = cutoff_date.replace(tzinfo=timezone.utc)
+                    date_to_compare = date_recorded
+                elif date_recorded.tzinfo is None and cutoff_date.tzinfo is not None:
+                    # date_recorded is naive, cutoff_date is aware - make date_recorded aware (UTC)
+                    from datetime import timezone
+                    date_to_compare = date_recorded.replace(tzinfo=timezone.utc)
+                    cutoff_date_aware = cutoff_date
+                else:
+                    # Both same type, use as-is
+                    date_to_compare = date_recorded
+                    cutoff_date_aware = cutoff_date
+                
+                # Filter by cutoff date
+                if date_to_compare < cutoff_date_aware:
+                    return None
             
             # Extract video URL - resolve using the pattern or API
             stream_url = self._construct_cloudfront_url(str(video_id))

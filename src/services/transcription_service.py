@@ -114,6 +114,12 @@ class GeminiTranscriptionProvider(TranscriptionProvider):
         You are a professional transcriptionist for the Michigan Legislature. 
         Your goal is to provide a verbatim, word-for-word transcript.
 
+        CRITICAL TIMING RULE:
+        The start of this audio file is ALWAYS [00:00:00]. 
+        Every timestamp MUST be relative to the beginning of the audio file provided.
+        DO NOT use wall-clock time or external metadata offsets. 
+        Start at [00:00:00] for the first word or sound.
+
         STRICT FORMATTING RULES:
         1. Every entry MUST start with a timestamp in [HH:MM:SS] format.
         2. Use bold speaker labels: **Speaker Name/Title:**.
