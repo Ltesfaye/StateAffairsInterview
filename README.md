@@ -7,44 +7,44 @@ A microservice-based system for the automated discovery, downloading, and transc
 StateAffair is built on a decoupled, task-driven architecture.
 
 ```mermaid
-graph TD
-    subgraph Archives [Legislative Archives]
-        H[MI House]
-        S[MI Senate]
-    end
-
-    subgraph Orchestration [Orchestration & UI]
+graph LR
+    subgraph Control [Control Tier]
         Beat[Celery Beat]
-        Dash[Streamlit Dashboard]
+        Dash[Streamlit UI]
     end
 
-    subgraph Services [Microservices]
-        D[Discovery Worker]
-        DL[Download Worker]
-        T[Transcription Worker]
+    subgraph Workers [Processing Tier]
+        D[Discovery]
+        DL[Download]
+        T[Transcription]
     end
 
-    subgraph Persistence [Data Layer]
-        Redis[(Redis Queue)]
-        DB[(PostgreSQL)]
-        Vol[Shared Storage]
+    subgraph External [External Resources]
+        H[House Archive]
+        S[Senate API]
+    end
+
+    subgraph Storage [Resources Tier]
+        Redis[(Redis)]
+        Postgres[(Postgres)]
+        Disk[(Shared Disk)]
     end
 
     %% Flow
-    Beat -->|"Hourly Trigger"| D
-    Dash -->|"Manual Trigger"| D
+    Beat -->|"Trigger"| D
+    Dash -->|"Trigger"| D
     
-    D -->|"Scrape & Resolve"| H
-    D -->|"Scrape & Resolve"| S
-    D -->|"Queue Task"| Redis
+    D -->|"Scrape"| H
+    D -->|"API Call"| S
+    D -->|"Queue"| Redis
     
     Redis --> DL
-    DL -->|"yt-dlp + aria2c"| Vol
-    DL -->|"Queue Transcription"| Redis
+    DL -->|"Save"| Disk
+    DL -->|"Queue"| Redis
     
     Redis --> T
-    T -->|"Local / OpenAI / Gemini"| Vol
-    T -->|"Save Registry"| DB
+    T -->|"Read/Write"| Disk
+    T -->|"Registry"| Postgres
 ```
 
 ---
@@ -54,7 +54,7 @@ graph TD
 ### Download Pipeline
 The download pipeline uses yt-dlp and aria2c for fragmented downloading.
 - Opens up to 16 simultaneous connections per video.
-- Decoupled stream resolution using Playwright for House and API for Senate.
+- Decoupled stream resolution using pattern matching for House and a Playwrite resolution API for Senate.
 
 ### Transcription
 Supports multiple AI transcription providers with a unified formatting layer:
