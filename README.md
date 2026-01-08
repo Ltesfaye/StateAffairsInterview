@@ -4,47 +4,41 @@ A microservice-based system for the automated discovery, downloading, and transc
 
 ## System Architecture
 
-StateAffair is built on a decoupled, task-driven architecture.
+StateAffair is built on a decoupled, task-driven architecture organized into three tiers.
 
 ```mermaid
-graph LR
-    subgraph Control [Control Tier]
-        Beat[Celery Beat]
-        Dash[Streamlit UI]
+graph TD
+    subgraph External [External Resources]
+        House[House Archive]
+        Senate[Senate API]
     end
 
     subgraph Workers [Processing Tier]
-        D[Discovery]
-        DL[Download]
-        T[Transcription]
+        Discovery[Discovery Worker]
+        Download[Download Worker]
+        Transcription[Transcription Worker]
+        Beat[Celery Beat]
+        UI[Streamlit Dashboard]
     end
 
-    subgraph External [External Resources]
-        H[House Archive]
-        S[Senate API]
+    subgraph Storage [Resource Tier]
+        Redis[Redis Queue]
+        Postgres[Postgres Database]
+        Disk[Shared Storage]
     end
 
-    subgraph Storage [Resources Tier]
-        Redis[(Redis)]
-        Postgres[(Postgres)]
-        Disk[(Shared Disk)]
-    end
-
-    %% Flow
-    Beat -->|"Trigger"| D
-    Dash -->|"Trigger"| D
-    
-    D -->|"Scrape"| H
-    D -->|"API Call"| S
-    D -->|"Queue"| Redis
-    
-    Redis --> DL
-    DL -->|"Save"| Disk
-    DL -->|"Queue"| Redis
-    
-    Redis --> T
-    T -->|"Read/Write"| Disk
-    T -->|"Registry"| Postgres
+    %% Interactions
+    Beat --> Discovery
+    UI --> Discovery
+    Discovery --> House
+    Discovery --> Senate
+    Discovery --> Redis
+    Redis --> Download
+    Download --> Disk
+    Download --> Redis
+    Redis --> Transcription
+    Transcription --> Disk
+    Transcription --> Postgres
 ```
 
 ---
