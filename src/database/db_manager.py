@@ -270,6 +270,21 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def get_last_downloaded_date(self, source: str) -> Optional[datetime]:
+        """Get the date_recorded of the most recently downloaded video for a source"""
+        session = self.get_session()
+        try:
+            record = session.query(VideoRecord).filter(
+                VideoRecord.source == source.lower(),
+                VideoRecord.download_status == "downloaded"
+            ).order_by(VideoRecord.date_recorded.desc()).first()
+            
+            if record:
+                return record.date_recorded
+            return None
+        finally:
+            session.close()
+
 
 # Global database manager instance
 _db_manager: Optional[DatabaseManager] = None

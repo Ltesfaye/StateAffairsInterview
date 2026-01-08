@@ -1,121 +1,151 @@
-# Video Archive Microservice Framework
+# StateAffair - Video Processing Pipeline
 
-A microservice-based system for discovering and downloading videos from Michigan House and Senate archives.
+A microservice-based system for the automated discovery, downloading, and transcription of Michigan House and Senate legislative videos.
 
-## Features
+## System Architecture
 
-- **Video Discovery**: Automatically discovers videos from both House and Senate archives
-- **Date Filtering**: Filters videos by date (default: past 1-2 months)
-- **State Management**: Tracks processed videos to prevent duplicates
-- **Idempotent Operations**: Safe to run multiple times
-- **Progress Tracking**: Shows download progress with progress bars
-- **Error Handling**: Retry logic and graceful error recovery
+StateAffair is built on a decoupled, task-driven architecture.
 
-## Installation
+```mermaid
+graph TD
+    subgraph Archives [Legislative Archives]
+        H[MI House]
+        S[MI Senate]
+    end
 
-1. Clone the repository
-2. Install dependencies:
+    subgraph Orchestration [Orchestration & UI]
+        Beat[Celery Beat]
+        Dash[Streamlit Dashboard]
+    end
 
-```bash
-pip install -r requirements.txt
+    subgraph Services [Microservices]
+        D[Discovery Worker]
+        DL[Download Worker]
+        T[Transcription Worker]
+    end
+
+    subgraph Persistence [Data Layer]
+        Redis[(Redis Queue)]
+        DB[(PostgreSQL)]
+        Vol[Shared Storage]
+    end
+
+    %% Flow
+    Beat -->|"Hourly Trigger"| D
+    Dash -->|"Manual Trigger"| D
+    
+    D -->|"Scrape & Resolve"| H
+    D -->|"Scrape & Resolve"| S
+    D -->|"Queue Task"| Redis
+    
+    Redis --> DL
+    DL -->|"yt-dlp + aria2c"| Vol
+    DL -->|"Queue Transcription"| Redis
+    
+    Redis --> T
+    T -->|"Local / OpenAI / Gemini"| Vol
+    T -->|"Save Registry"| DB
 ```
 
-3. (Optional) Install Playwright for blob URL extraction:
+---
+
+## Key Features
+
+### Download Pipeline
+The download pipeline uses yt-dlp and aria2c for fragmented downloading.
+- Opens up to 16 simultaneous connections per video.
+- Decoupled stream resolution using Playwright for House and API for Senate.
+
+### Transcription
+Supports multiple AI transcription providers with a unified formatting layer:
+- Google Gemini 3.0 Flash/Pro with relative timestamps.
+- OpenAI Whisper API with speaker identification.
+- Local Whisper runs on local CPU/GPU.
+
+### Searchable Transcription Registry
+All transcripts are stored in PostgreSQL.
+- Transcripts include word-level metadata and speaker labels.
+- Automated SafeMigrator manages database schema updates across all services.
+
+### Video Viewer
+Streamlit interface for interacting with the pipeline:
+- Browse transcribed sessions with a filterable registry.
+- Read transcripts alongside a synchronized video player.
+- Seeking to specific moments by clicking timestamps in the transcript.
+
+---
+
+## Data Storage
+
+The data/ directory serves as a local persistent volume for videos, audio, and transcripts. In this development environment, it is used to map what will become an S3 bucket in a production deployment.
+
+---
+
+## Deployment & Scaling
+
+### Quick Start
+Ensure Docker and Docker Compose are installed, then run:
 
 ```bash
-playwright install
+# 1. Prepare environment
+cp .env.example .env  # Add API keys
+
+# 2. Build and launch everything
+make build
 ```
 
-## Configuration
+### Manual Controls
+- make launch: Starts containers and opens the dashboard.
+- make stop: Stops services.
+- make logs: Follows logs from microservices.
 
-Edit `config/config.yaml` to customize settings:
-
-- `discovery.cutoff_days`: Number of days to look back (default: 60)
-- `download.output_directory`: Where to save downloaded videos
-- `database.path`: SQLite database location
-
-## Usage
-
-### Basic Usage
-
-Discover and download videos from the past 60 days:
+### Scaling
+The system supports horizontal scaling via Docker Compose:
 
 ```bash
-python -m src.main
+# Scale to 3 downloaders and 5 transcribers
+docker compose up -d --scale download-worker=3 --scale transcription-worker=5
 ```
 
-### Custom Cutoff Date
+---
 
-Only process videos after a specific date:
+## Configuration (.env)
 
-```bash
-python -m src.main --cutoff-date 2024-11-01
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| DOWNLOAD_CONCURRENCY | Tasks per download container | 1 |
+| TRANSCRIPTION_CONCURRENCY | Tasks per transcription container | 1 |
+| TRANSCRIPTION_PROVIDER | local, openai, or gemini | local |
+| WHISPER_MODEL | Size of local model (e.g., base, small) | base |
+| GEMINI_MODEL | Model name (e.g., gemini-3-flash-preview) | |
 
-### Custom Days
+---
 
-Look back a different number of days:
+## Automation & Reliability
 
-```bash
-python -m src.main --cutoff-days 30
-```
+### Automated Discovery
+Celery Beat polls legislative archives every hour. It identifies the gap between the latest successfully downloaded video and the current date.
 
-### Discover Only
+### Recovery Mechanism
+The system includes an automated mechanism to manage task lifecycle:
+- Detects tasks stuck in progress for more than 30 minutes.
+- Resets and requeues failed tasks up to 3 times.
+- Error reporting is captured in the Video Registry.
 
-Only discover videos without downloading:
-
-```bash
-python -m src.main --discover-only
-```
-
-### Download Only
-
-Only download already discovered videos:
-
-```bash
-python -m src.main --download-only
-```
-
-### Limit Results
-
-Limit number of videos per source:
-
-```bash
-python -m src.main --limit 10
-```
+---
 
 ## Project Structure
 
 ```
 StateAffair-Interview/
 ├── src/
-│   ├── services/       # Core microservices
-│   ├── scrapers/       # Archive scrapers
-│   ├── downloaders/    # Download handlers
-│   ├── models/         # Data models
-│   ├── database/       # Database layer
-│   └── utils/          # Utilities
-├── config/             # Configuration files
-├── data/               # Data storage (created at runtime)
-└── logs/               # Log files (created at runtime)
+│   ├── workers/        # Celery App & Task Definitions
+│   ├── services/       # Discovery, Download, Transcription logic
+│   ├── scrapers/       # Site-specific scraping & resolution
+│   ├── dashboard/      # Streamlit UI
+│   ├── database/       # SQLAlchemy models & SafeMigrator
+│   └── utils/          # Logging, Config, Audio Extraction
+├── data/               # Persistent shared storage (S3 mapping)
+├── docker-compose.yaml # Microservice orchestration
+└── Makefile            # Simplified dev commands
 ```
-
-## Architecture
-
-The system is built with a microservice architecture:
-
-- **Discovery Service**: Orchestrates video discovery from multiple archives
-- **Download Service**: Manages video downloads with state tracking
-- **State Service**: Tracks processed videos in SQLite database
-
-## Future Extensions
-
-- Scheduled detection (cron jobs)
-- Video transcription service
-- REST API layer
-- Horizontal scaling support
-
-## License
-
-See LICENSE file for details.
-

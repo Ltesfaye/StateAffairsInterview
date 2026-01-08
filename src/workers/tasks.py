@@ -195,6 +195,51 @@ def transcribe_audio_task(video_id: str, source: str):
         logger.error(f"Transcription failed for {video_id}: {e}", extra={"trace_id": trace_id})
         db_manager.update_video_status(video_id, source, transcription_status=TranscriptionStatus.FAILED)
 
+@app.task(name="src.workers.tasks.auto_discover_new_videos_task", queue="discovery")
+def auto_discover_new_videos_task():
+    """Automatically discover new videos since last download for each source"""
+    trace_id = generate_trace_id()
+    logger.info("Starting auto-discovery of new videos", extra={"trace_id": trace_id})
+    
+    db_manager = get_db_manager()
+    discovery_service = DiscoveryService()
+    state_service = StateService(db_manager)
+    
+    sources = ["house", "senate"]
+    total_new = 0
+    
+    for source in sources:
+        # Get last downloaded video date for this source
+        last_date = db_manager.get_last_downloaded_date(source)
+        
+        if last_date:
+            start_date = last_date
+            logger.info(f"Discovering {source} videos since {start_date}", extra={"trace_id": trace_id})
+        else:
+            # If no videos downloaded yet, use last 7 days as default
+            start_date = datetime.utcnow() - timedelta(days=7)
+            logger.info(f"No previous {source} downloads, using default: {start_date}", extra={"trace_id": trace_id})
+        
+        # Discover from this source
+        videos = discovery_service.discover_videos(
+            start_date=start_date,
+            end_date=datetime.utcnow(),
+            source=source,
+            resolve_streams=False,
+        )
+        
+        new_count = 0
+        for video in videos:
+            if not db_manager.video_exists(video.video_id, video.source):
+                state_service.mark_video_discovered(video)
+                download_video_task.delay(video.video_id, video.source)
+                new_count += 1
+        
+        logger.info(f"Auto-discovery for {source} complete. Found {new_count} new videos.", extra={"trace_id": trace_id})
+        total_new += new_count
+        
+    return {"new_videos": total_new}
+
 @app.task(name="src.workers.tasks.requeue_failed_tasks", queue="transcription")
 def requeue_failed_tasks():
     """Find failed tasks and re-queue them if files exist, otherwise restart from download"""

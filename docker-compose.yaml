@@ -30,7 +30,6 @@ services:
 
   discovery-worker:
     build: .
-    container_name: stateaffair-discovery
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
@@ -46,11 +45,12 @@ services:
     volumes:
       - storage:/storage
       - .:/app
-    command: python -m celery -A src.workers.celery_app worker -l info -Q discovery --concurrency=2
+    command: python -m celery -A src.workers.celery_app worker -l info -Q discovery --concurrency=${DISCOVERY_CONCURRENCY:-1}
+    deploy:
+      replicas: 1
 
   download-worker:
     build: .
-    container_name: stateaffair-downloader
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
@@ -64,11 +64,12 @@ services:
     volumes:
       - storage:/storage
       - .:/app
-    command: python -m celery -A src.workers.celery_app worker -l info -Q download --concurrency=2
+    command: python -m celery -A src.workers.celery_app worker -l info -Q download --concurrency=${DOWNLOAD_CONCURRENCY:-1}
+    deploy:
+      replicas: 1
 
   transcription-worker:
     build: .
-    container_name: stateaffair-transcriber
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
@@ -82,7 +83,27 @@ services:
     volumes:
       - storage:/storage
       - .:/app
-    command: python -m celery -A src.workers.celery_app worker -l info -Q transcription --concurrency=1
+    command: python -m celery -A src.workers.celery_app worker -l info -Q transcription --concurrency=${TRANSCRIPTION_CONCURRENCY:-1}
+    deploy:
+      replicas: 1
+
+  celery-beat:
+    build: .
+    container_name: stateaffair-beat
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - REDIS_URL=redis://redis:6379/0
+      - STORAGE_PATH=/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/storage
+      - .:/app
+    command: python -m celery -A src.workers.celery_app beat -l info
 
   dashboard:
     build: .
